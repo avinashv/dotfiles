@@ -1,0 +1,14 @@
+[user]
+	name = Avinash Vora
+	email = avinashvora@gmail.com
+[core]
+	excludesfile = /Users/avinashv/.gitignore_global
+	editor = code
+	ignorecase = false
+[push]
+	default = current
+[alias]
+	unstage = reset HEAD --
+	uncommit = reset --soft HEAD~
+[init]
+	defaultBranch = main

@@ -1,0 +1,267 @@
+;;; init.el
+
+;;; ---
+;;; Package management
+;;; ---
+
+(require 'package)
+
+;;; look for packages in GNU ELPA and MELPA
+(setq package-archives
+      '(("gnu"    . "https://elpa.gnu.org/packages/")
+        ("melpa"  . "https://melpa.org/packages/")))
+
+;;; initialize the package system early
+(package-initialize)
+(unless package-archive-contents
+  (package-refresh-contents))
+
+;;; install use-package for cleaner package declarations
+(unless (package-installed-p 'use-package)
+  (package-install 'use-package))
+(require 'use-package)
+(setq use-package-always-ensure t)
+
+;;; ---
+;;; Theme & Font
+;;; ---
+
+(use-package catppuccin-theme
+  :config
+  (setq catppuccin-flavor 'mocha)
+  (load-theme 'catppuccin :no-confirm))
+
+;;; set font
+(set-face-attribute 'default nil :font "MesloLGLDZ Nerd Font Mono" :height 128)
+
+;;; ---
+;;; UI
+;;; ---
+
+;; in GUI frames, remove the usual chrome for a cleaner interface
+;; in terminal frames, these modes may not exist/be relevant, so we guard them
+(when (display-graphic-p)
+  (set-fringe-mode 10)   ;; give some breathing room
+  (tool-bar-mode -1)     ;; remove toolbar icons
+  (scroll-bar-mode -1)   ;; remove scrollbars
+  (menu-bar-mode -1))    ;; remove menu bar (Cmd-? still works for help/search)
+
+;; small visual defaults that work in both GUI and terminal
+(blink-cursor-mode -1)    ;; stop cursor blinking
+(column-number-mode 1)    ;; show column number in mode line
+(line-number-mode 1)      ;; show line number in mode line (not line numbers in buffer)
+
+;; show line numbers in the left gutter
+(global-display-line-numbers-mode 1)
+
+;;; ---
+;;; Behavior
+;;; ---
+
+(setq inhibit-startup-message t   ;; no splash screen
+      ring-bell-function 'ignore) ;; no beeps
+
+(global-auto-revert-mode t) ;; auto-refresh buffers on file change
+
+;;; ensure unique names when matching files exist in a buffer
+(require 'uniquify)
+(setq uniquify-buffer-name-style 'forward)
+
+;;; performance threshold tweaks
+(setq gc-cons-threshold 100000000) ; 100 mb
+(setq read-process-output-max (* 1024 1024)) ; 1mb
+
+;;; ---
+;;; Editing Defaults
+;;; ---
+
+;; use spaces, not tabs
+(setq-default indent-tabs-mode nil)
+
+;; a reasonable default width; individual modes may override
+(setq-default tab-width 4)
+
+;; helpful when working across files that change on disk
+(global-auto-revert-mode 1)
+
+;; remember cursor position in files between sessions
+(save-place-mode 1)
+
+;; keep a small "recent files" list
+(recentf-mode 1)
+
+;; highlight matching parentheses
+(show-paren-mode 1)
+
+;;; ---
+;;; Backups/Autosaves
+;;; ---
+
+;; by default Emacs creates backup files like "file.txt~" alongside the file
+;; this moves them into ~/.config/emacs/backups/
+(let ((backup-dir (expand-file-name "backups/" user-emacs-directory))
+      (autosave-dir (expand-file-name "autosaves/" user-emacs-directory)))
+  (make-directory backup-dir t)
+  (make-directory autosave-dir t)
+  (setq backup-directory-alist `(("." . ,backup-dir))
+        auto-save-file-name-transforms `((".*" ,autosave-dir t))
+        auto-save-default t))
+
+;;; ---
+;;; Custom.el
+;;; ---
+
+;; if you ever use M-x customize, Emacs writes settings to custom-file
+;; keeping it separate prevents init.el from being cluttered
+(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+(when (file-exists-p custom-file)
+  (load custom-file 'noerror 'nomessage))
+
+;;; ---
+;;; Evil Mode (Vim Emulation)
+;;; ---
+
+;; (use-package evil
+;;  :init
+;;  (setq evil-want-integration t)   ;; required for evil-collection
+;;  (setq evil-want-keybinding nil)  ;; let evil-collection handle non-editing buffers
+;;  (setq evil-want-C-u-scroll t)    ;; C-u scrolls like vim
+;;  (setq evil-want-Y-yank-to-eol t) ;; Y yanks to end of line (vim default)
+;;  :config
+;;  (evil-mode 1))
+
+;; extend evil keybindings to more modes (dired, magit, etc.)
+;; (use-package evil-collection
+;;   :after evil
+;;   :config
+;;   (evil-collection-init))
+
+;;; ---
+;;; Terminal
+;;; ---
+
+;; vterm is a fast, fully-featured terminal emulator
+;; requires cmake and libvterm (brew install cmake libvterm)
+(use-package vterm
+  :bind (("C-c v" . vterm)
+         ("C-c V" . vterm-other-window))
+  :config
+  (setq vterm-max-scrollback 10000))
+
+;; toggle vterm as a popup at the bottom
+(use-package vterm-toggle
+  :bind (("C-`" . vterm-toggle)
+         ("C-~" . vterm-toggle-cd))  ;; open in current directory
+  :config
+  (setq vterm-toggle-fullscreen-p nil)
+  (setq vterm-toggle-scope 'project)) ;; one terminal per project
+
+;;; ---
+;;; Completion
+;;; ---
+
+(use-package company
+  :hook (after-init . global-company-mode)
+  :config
+  (setq company-minimum-prefix-length 1) ;; start completing after 1 char
+  (setq company-idle-delay 0.1))         ;; show popup quickly
+
+;;; ---
+;;; LSP (Language Server Protocol)
+;;; ---
+
+;; lsp-mode auto-installs language servers when you first open a file
+;; similar to Mason in nvim
+(use-package lsp-mode
+  :hook ((python-mode . lsp-deferred)
+         (python-ts-mode . lsp-deferred)
+         (js-mode . lsp-deferred)
+         (js-ts-mode . lsp-deferred)
+         (typescript-mode . lsp-deferred)
+         (typescript-ts-mode . lsp-deferred)
+         (tsx-ts-mode . lsp-deferred)
+         (go-mode . lsp-deferred)
+         (go-ts-mode . lsp-deferred)
+         (rust-mode . lsp-deferred)
+         (rust-ts-mode . lsp-deferred)
+         (c-mode . lsp-deferred)
+         (c-ts-mode . lsp-deferred)
+         (css-mode . lsp-deferred)
+         (css-ts-mode . lsp-deferred)
+         (web-mode . lsp-deferred)
+         (lua-mode . lsp-deferred)
+         (lua-ts-mode . lsp-deferred)
+         (haxe-mode . lsp-deferred))
+  :commands (lsp lsp-deferred)
+  :init
+  (setq lsp-keymap-prefix "C-c l") ;; prefix for LSP commands
+  :config
+  (setq lsp-auto-guess-root t)     ;; detect project root automatically
+  (setq lsp-enable-suggest-server-download t)) ;; prompt to install missing servers
+
+;;; enhanced LSP UI (inline docs, sideline diagnostics)
+(use-package lsp-ui
+  :after lsp-mode
+  :config
+  (setq lsp-ui-doc-enable t)      ;; show documentation popups
+  (setq lsp-ui-sideline-enable t) ;; show diagnostics iien sideline
+  (setq lsp-ui-sideline-show-hover nil)) ;; but don't clutter with hover info
+
+;;; ---
+;;; Language Modes (for languages without built-in support)
+;;; ---
+
+;; web-mode handles HTML, JSX, and templating languages better than built-in modes
+;; also provides auto-closing tags
+(use-package web-mode
+  :mode (("\\.html?\\'" . web-mode)
+         ("\\.jsx\\'" . web-mode)
+         ("\\.tsx\\'" . web-mode))
+  :config
+  (setq web-mode-markup-indent-offset 4)
+  (setq web-mode-css-indent-offset 4)
+  (setq web-mode-code-indent-offset 4)
+  (setq web-mode-enable-auto-pairing t)
+  (setq web-mode-enable-auto-closing t)  ;; auto-close tags
+  (setq web-mode-enable-current-element-highlight t))
+
+;; lua
+(use-package lua-mode
+  :mode "\\.lua\\'")
+
+;; haxe
+(use-package haxe-mode
+  :mode "\\.hx\\'")
+
+;;; ---
+;;; Tree-sitter (Syntax Highlighting & Parsing)
+;;; ---
+
+;; treesit-auto handles grammar installation and mode remapping
+;; e.g., automatically uses python-ts-mode instead of python-mode
+(use-package treesit-auto
+  :config
+  (setq treesit-auto-install 'prompt) ;; ask before installing grammars
+  (global-treesit-auto-mode))
+
+;;; ---
+;;; Formatting
+;;; ---
+
+;; apheleia runs formatters (prettier, black, gofmt, etc.) on save
+;; auto-detects which formatter to use based on the file type
+;; note: formatters must be installed on your system (npm, pip, brew, etc.)
+(use-package apheleia
+  :config
+  (apheleia-global-mode t))
+
+;;; ---
+;;; Discoverability
+;;; ---
+
+;; which-key shows available keybindings in a popup
+;; helpful for learning Emacs and LSP commands
+(use-package which-key
+  :config
+  (setq which-key-idle-delay 0.3) ;; show quickly
+  (which-key-mode))

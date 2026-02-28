@@ -1,0 +1,70 @@
+#+TITLE: Emacs Config
+#+AUTHOR: Avinash Vora
+#+DESCRIPTION: Avinash's personal Emacs configuration
+#+STARTUP: showeverything
+#+OPTIONS: toc:2
+
+* UI (clean, minimal)
+#+begin_src emacs-lisp
+(setq inhibit-startup-message t
+      ring-bell-function 'ignore)
+
+(defun avi/apply-clean-ui (&optional frame)
+  "Disable GUI chrome for FRAME (or current frame) and keep UI clean."
+  (with-selected-frame (or frame (selected-frame))
+    (when (display-graphic-p)
+      (tool-bar-mode -1)
+      (scroll-bar-mode -1)
+      (menu-bar-mode -1))
+    (blink-cursor-mode -1)))
+
+;; Apply now and to future frames (important for emacsclient)
+(avi/apply-clean-ui)
+(add-hook 'after-make-frame-functions #'avi/apply-clean-ui)
+
+(column-number-mode 1)
+(line-number-mode 1)
+#+end_src
+
+* Theme (Catppuccin Mocha)
+#+begin_src emacs-lisp
+;; Prefer truecolor in terminals that support it
+(setenv "COLORTERM" "truecolor")
+
+(defun avi/apply-catppuccin-mocha (&optional frame)
+  "Apply Catppuccin Mocha theme for FRAME (or current frame)."
+  (with-selected-frame (or frame (selected-frame))
+    (require 'catppuccin-theme)
+
+    ;; Some versions expose a flavor variable; set it if present.
+    ;; We do this before loading the theme, and then load/reload defensively.
+    (when (boundp 'catppuccin-flavor)
+      (setq catppuccin-flavor 'mocha))
+
+    (mapc #'disable-theme custom-enabled-themes)
+    (load-theme 'catppuccin :no-confirm)
+
+    ;; If flavor is read at load time in your package version, re-load.
+    (mapc #'disable-theme custom-enabled-themes)
+    (load-theme 'catppuccin :no-confirm)))
+
+(avi/apply-catppuccin-mocha)
+(add-hook 'after-make-frame-functions #'avi/apply-catppuccin-mocha)
+#+end_src
+
+* Quality-of-life defaults (small, vanilla)
+#+begin_src emacs-lisp
+(setq-default indent-tabs-mode nil
+              tab-width 4
+              fill-column 100)
+
+(global-auto-revert-mode 1)
+(save-place-mode 1)
+(recentf-mode 1)
+(show-paren-mode 1)
+
+;; Keep customize noise out of your files
+(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+(when (file-exists-p custom-file)
+  (load custom-file 'noerror 'nomessage))
+#+end_src

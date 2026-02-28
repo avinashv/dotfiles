@@ -1,0 +1,23 @@
+theme = catppucin-mocha.conf
+font-family = "JetBrainsMono Nerd Font"
+font-feature = "liga=1,calt=1,ss01=1,ss02=1,ss19=1"
+
+window-theme = dark
+macos-titlebar-style = transparent
+window-save-state = always
+background-opacity = 0.90
+background-blur = 32
+
+cursor-style = block
+cursor-style-blink = true
+shell-integration-features = no-cursor
+
+clipboard-read = allow
+clipboard-write = allow
+
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/cursor_smear.glsl
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/cursor_blaze.glsl
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/retro_terminal.glsl
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/bloom.glsl
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/bettercrt.glsl
+# custom-shader = /Users/avinashv/.config/ghostty/shaders/animated_gradient.glsl

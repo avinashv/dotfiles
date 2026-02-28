@@ -1,0 +1,1733 @@
+# Implementing Pebble: A Language Implementation Tutorial in Zig
+
+Welcome! This tutorial will guide you through building an interpreter for **Pebble**, a simple variable-based scripting language. Along the way, you'll learn Zig fundamentals and core concepts of language implementation.
+
+We'll build this incrementally. Each section introduces a small piece, explains *why* it works that way, and connects it to the bigger picture.
+
+---
+
+## Table of Contents
+
+1. [Project Setup](#1-project-setup)
+2. [Designing the Value Type](#2-designing-the-value-type)
+3. [The Lexer](#3-the-lexer)
+4. [The Parser](#4-the-parser)
+5. [The Interpreter](#5-the-interpreter)
+6. [Adding Control Flow](#6-adding-control-flow)
+7. [Arrays and Strings](#7-arrays-and-strings)
+8. [Putting It All Together](#8-putting-it-all-together)
+
+---
+
+## 1. Project Setup
+
+### Creating the Project
+
+```bash
+mkdir pebble
+cd pebble
+zig init
+```
+This creates:
+```
+pebble/
+  src/
+    main.zig      # Entry point
+    root.zig      # Library root (we won't use this much)
+  build.zig       # Build configuration
+  build.zig.zon   # Package manifest
+```
+
+### Understanding `build.zig`
+
+The generated `build.zig` is complex. For now, know that `zig build run` compiles and runs `src/main.zig`. You can also use `zig run src/main.zig` during development for quick iteration.
+
+### Project Structure
+
+We'll create these files:
+```
+src/
+  main.zig        # Entry point, file loading, REPL
+  value.zig       # The Value type (int, string, array)
+  lexer.zig       # Tokenizes source lines
+  parser.zig      # Builds instruction list
+  interpreter.zig # Executes instructions
+```
+
+Let's start with `main.zig` as a skeleton:
+
+```zig
+// =============================================================================
+// main.zig - Entry Point for the Pebble Interpreter
+// =============================================================================
+//
+// This file handles:
+//   1. Reading a .pbl source file from command line arguments
+//   2. Orchestrating the lexer → parser → interpreter pipeline
+//   3. Error reporting to the user
+//
+// We'll flesh this out as we build each component.
+// =============================================================================
+
+const std = @import("std");
+
+pub fn main() !void {
+    // For now, just prove we can run
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Pebble interpreter v0.1\n", .{});
+}
+```
+
+**Zig Concepts Introduced:**
+
+- `const std = @import("std")` — Import Zig's standard library. `@import` is a builtin function (note the `@` prefix).
+
+- `pub fn main() !void` — The entry point. Let's break down the signature:
+  - `pub` — Public visibility (required for `main`)
+  - `fn` — Function declaration
+  - `!void` — Returns nothing (`void`) but *may* return an error. The `!` is Zig's way of saying "this function can fail". It's shorthand for `anyerror!void`.
+
+- `try` — Propagate errors. If `stdout.print` fails, `main` immediately returns that error. Without `try`, you'd have to handle the error explicitly.
+
+- `.{}` — An anonymous struct literal. Here it's an empty tuple of format arguments (like `printf` with no `%` specifiers).
+
+Run it:
+```bash
+zig build run
+```
+
+You should see: `Pebble interpreter v0.1`
+
+---
+
+## 2. Designing the Value Type
+
+Before we can interpret anything, we need to represent runtime values. Pebble has three types: integers, strings, and arrays.
+
+### The Problem
+
+In a dynamically-typed language, a variable might hold an integer now and a string later. How do we represent "a value of any type" in a statically-typed language like Zig?
+
+### The Solution: Tagged Unions
+
+Zig has **tagged unions** — a value that is exactly one of several types, with a tag indicating which one.
+
+Create `src/value.zig`:
+
+```zig
+// =============================================================================
+// value.zig - Runtime Values for Pebble
+// =============================================================================
+//
+// Pebble is dynamically typed at the language level, but Zig is statically
+// typed. We bridge this gap with a "tagged union" — a type that can hold
+// exactly one of several variants, with a tag to identify which.
+//
+// Think of it like a box that can contain an integer OR a string OR an array,
+// and has a label on the outside telling you what's inside.
+//
+// This is a common pattern in interpreters. In C, you'd use a struct with
+// an enum tag and a union. Zig makes this a first-class feature.
+// =============================================================================
+
+const std = @import("std");
+
+// -----------------------------------------------------------------------------
+// The Value Type
+// -----------------------------------------------------------------------------
+//
+// This is the core runtime type. Every variable in Pebble holds a Value.
+//
+// The `union(enum)` syntax creates a tagged union:
+//   - It's a union (overlapping memory for different types)
+//   - Tagged with an enum (so we know which variant is active)
+//   - Zig ensures you can only access the active variant
+// -----------------------------------------------------------------------------
+
+pub const Value = union(enum) {
+    // An integer value. We use i64 for a reasonable range.
+    // In a production language, you might use arbitrary-precision integers.
+    integer: i64,
+
+    // A string value. We store a slice (pointer + length).
+    // Memory management note: we'll need to think about who owns this memory.
+    // For now, strings will be slices into the source or allocated strings.
+    string: []const u8,
+
+    // An array of values. Arrays can hold mixed types in Pebble.
+    // We use an ArrayList for dynamic sizing.
+    array: std.ArrayList(Value),
+
+    // -------------------------------------------------------------------------
+    // Formatting for Printing
+    // -------------------------------------------------------------------------
+    //
+    // Zig's print system looks for a `format` function on types.
+    // This lets us write: `print("{}", .{my_value})`
+    //
+    // The signature is prescribed by Zig's format protocol:
+    //   - `self`: the value to format
+    //   - `comptime fmt`: format specifier (we ignore it)
+    //   - `options`: formatting options (we ignore these too)
+    //   - `writer`: where to write the output
+    // -------------------------------------------------------------------------
+
+    pub fn format(
+        self: Value,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        // We don't use these parameters, but must declare them.
+        // The underscore tells Zig "I'm intentionally ignoring this".
+        _ = fmt;
+        _ = options;
+
+        // Switch on the tag to handle each variant
+        switch (self) {
+            .integer => |n| try writer.print("{d}", .{n}),
+            .string => |s| try writer.print("{s}", .{s}),
+            .array => |arr| {
+                try writer.writeAll("[");
+                for (arr.items, 0..) |item, i| {
+                    if (i > 0) try writer.writeAll(", ");
+                    try writer.print("{}", .{item}); // Recursive!
+                }
+                try writer.writeAll("]");
+            },
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Type Checking Helpers
+    // -------------------------------------------------------------------------
+    //
+    // These make the interpreter code more readable.
+    // Instead of: `switch (val) { .integer => true, else => false }`
+    // We write:   `val.isInteger()`
+    // -------------------------------------------------------------------------
+
+    pub fn isInteger(self: Value) bool {
+        return self == .integer;
+    }
+
+    pub fn isString(self: Value) bool {
+        return self == .string;
+    }
+
+    pub fn isArray(self: Value) bool {
+        return self == .array;
+    }
+
+    // -------------------------------------------------------------------------
+    // Safe Accessors
+    // -------------------------------------------------------------------------
+    //
+    // These unwrap the value if it's the right type, or return null.
+    // This is Zig's "optional" pattern — safer than assertions.
+    // -------------------------------------------------------------------------
+
+    pub fn asInteger(self: Value) ?i64 {
+        return switch (self) {
+            .integer => |n| n,
+            else => null,
+        };
+    }
+
+    pub fn asString(self: Value) ?[]const u8 {
+        return switch (self) {
+            .string => |s| s,
+            else => null,
+        };
+    }
+};
+```
+
+**Zig Concepts Introduced:**
+
+- `union(enum)` — A tagged union. The enum part is auto-generated from the field names (`.integer`, `.string`, `.array`).
+
+- `switch` with capture — `switch (self) { .integer => |n| ... }` captures the inner value as `n`.
+
+- `anytype` — Generic parameter. The `writer` can be any type that has the right methods. This is Zig's approach to generics: comptime duck typing.
+
+- `comptime` — Compile-time parameter. The format string is known at compile time, enabling Zig to verify format specifiers.
+
+- `?T` — Optional type. `?i64` means "either an i64 or null".
+
+### Testing the Value Type
+
+Let's update `main.zig` to test our Value type:
+
+```zig
+const std = @import("std");
+const Value = @import("value.zig").Value;
+
+pub fn main() !void {
+    const stdout = std.io.getStdOut().writer();
+
+    // Create some values
+    const num = Value{ .integer = 42 };
+    const str = Value{ .string = "hello" };
+
+    // Print them using our format function
+    try stdout.print("Number: {}\n", .{num});
+    try stdout.print("String: {}\n", .{str});
+
+    // Test the helpers
+    try stdout.print("num.isInteger() = {}\n", .{num.isInteger()});
+    try stdout.print("num.asInteger() = {?}\n", .{num.asInteger()});
+    try stdout.print("str.asInteger() = {?}\n", .{str.asInteger()});
+}
+```
+
+Run it:
+```bash
+zig build run
+```
+
+Expected output:
+```
+Number: 42
+String: hello
+num.isInteger() = true
+num.asInteger() = 42
+str.asInteger() = null
+```
+
+---
+
+## 3. The Lexer
+
+The lexer (or tokenizer) converts source text into a sequence of tokens. For Pebble, this is simple because each line is one instruction.
+
+### What is a Token?
+
+A token is a meaningful unit of source code. In the line:
+
+```
+add x 10 result
+```
+
+The tokens are: `add`, `x`, `10`, `result`.
+
+We also need to track token *types*: is `10` a number or an identifier? Is `"hello"` a string literal?
+
+Create `src/lexer.zig`:
+
+```zig
+// =============================================================================
+// lexer.zig - Tokenizer for Pebble
+// =============================================================================
+//
+// The lexer's job is to convert raw source text into tokens. This is the
+// first stage of any language implementation.
+//
+// For Pebble, lexing is simple:
+//   - Each line is one instruction
+//   - Tokens are whitespace-separated
+//   - Strings are "quoted like this"
+//   - Comments start with # and extend to end of line
+//
+// We DON'T build a list of all tokens upfront. Instead, we provide an
+// iterator that yields tokens one at a time. This is memory-efficient
+// and idiomatic in Zig.
+// =============================================================================
+
+const std = @import("std");
+
+// -----------------------------------------------------------------------------
+// Token Types
+// -----------------------------------------------------------------------------
+//
+// Each token has a "type" that tells the parser what it represents.
+// This is simpler than tracking every keyword — the parser will check
+// if an identifier matches a keyword when needed.
+// -----------------------------------------------------------------------------
+
+pub const TokenType = enum {
+    identifier,   // Keywords and variable names: add, x, myVar, label
+    integer,      // Numeric literals: 42, -7, 0
+    string,       // String literals: "hello world"
+    newline,      // End of a line (important for our line-based syntax)
+    eof,          // End of input
+};
+
+// -----------------------------------------------------------------------------
+// Token Structure
+// -----------------------------------------------------------------------------
+//
+// A token bundles:
+//   - Its type (what kind of token)
+//   - Its text (the actual characters from source)
+//   - Its location (for error messages)
+//
+// Note: `text` is a slice into the original source. We don't copy strings
+// during lexing — this is efficient but means the source must outlive tokens.
+// -----------------------------------------------------------------------------
+
+pub const Token = struct {
+    type: TokenType,
+    text: []const u8,
+    line: usize,  // 1-indexed line number for error messages
+};
+
+// -----------------------------------------------------------------------------
+// The Lexer
+// -----------------------------------------------------------------------------
+//
+// The lexer holds the source text and current position. It provides a
+// `next()` function that returns the next token.
+//
+// Design choice: We use an iterator pattern rather than building a list.
+// This is common in Zig — it's lazy and memory-efficient.
+// -----------------------------------------------------------------------------
+
+pub const Lexer = struct {
+    source: []const u8,  // The complete source text
+    pos: usize,          // Current byte position in source
+    line: usize,         // Current line number (1-indexed)
+
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+    //
+    // Zig doesn't have constructors, but the convention is an `init` function
+    // that returns an instance of the struct.
+    // -------------------------------------------------------------------------
+
+    pub fn init(source: []const u8) Lexer {
+        return Lexer{
+            .source = source,
+            .pos = 0,
+            .line = 1,
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Get Next Token
+    // -------------------------------------------------------------------------
+    //
+    // This is the core lexer function. It:
+    //   1. Skips whitespace (but not newlines — those are tokens!)
+    //   2. Handles comments
+    //   3. Recognizes strings, numbers, and identifiers
+    //   4. Advances position past the token
+    //
+    // Returns: The next token, or an error if we hit invalid syntax
+    // -------------------------------------------------------------------------
+
+    pub fn next(self: *Lexer) !Token {
+        // Skip spaces and tabs (but NOT newlines)
+        self.skipWhitespace();
+
+        // Check for end of input
+        if (self.isAtEnd()) {
+            return Token{ .type = .eof, .text = "", .line = self.line };
+        }
+
+        // Check for comment — skip to end of line
+        if (self.peek() == '#') {
+            self.skipComment();
+            // After skipping comment, we might be at newline or EOF
+            // Recurse to get the actual next token
+            return self.next();
+        }
+
+        // Check for newline
+        if (self.peek() == '\n') {
+            const token = Token{ .type = .newline, .text = "\n", .line = self.line };
+            self.advance();
+            self.line += 1;
+            return token;
+        }
+
+        // Check for string literal
+        if (self.peek() == '"') {
+            return self.readString();
+        }
+
+        // Check for number (including negative numbers)
+        if (isDigit(self.peek()) or
+            (self.peek() == '-' and self.pos + 1 < self.source.len and isDigit(self.source[self.pos + 1])))
+        {
+            return self.readNumber();
+        }
+
+        // Otherwise, it's an identifier (keywords are identifiers for now)
+        if (isIdentifierStart(self.peek())) {
+            return self.readIdentifier();
+        }
+
+        // Unknown character — this is an error
+        std.debug.print("Unexpected character '{}' at line {}\n", .{ self.peek(), self.line });
+        return error.UnexpectedCharacter;
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: Skip Whitespace (not newlines)
+    // -------------------------------------------------------------------------
+
+    fn skipWhitespace(self: *Lexer) void {
+        while (!self.isAtEnd() and (self.peek() == ' ' or self.peek() == '\t' or self.peek() == '\r')) {
+            self.advance();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: Skip Comment
+    // -------------------------------------------------------------------------
+    //
+    // Comments start with # and extend to the end of the line.
+    // We skip everything until (but not including) the newline.
+    // -------------------------------------------------------------------------
+
+    fn skipComment(self: *Lexer) void {
+        while (!self.isAtEnd() and self.peek() != '\n') {
+            self.advance();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: Read String Literal
+    // -------------------------------------------------------------------------
+    //
+    // Strings are enclosed in double quotes: "like this"
+    // We don't handle escape sequences for simplicity.
+    // -------------------------------------------------------------------------
+
+    fn readString(self: *Lexer) !Token {
+        const start_line = self.line;
+
+        // Skip opening quote
+        self.advance();
+        const start = self.pos;
+
+        // Read until closing quote
+        while (!self.isAtEnd() and self.peek() != '"') {
+            if (self.peek() == '\n') {
+                return error.UnterminatedString;
+            }
+            self.advance();
+        }
+
+        if (self.isAtEnd()) {
+            return error.UnterminatedString;
+        }
+
+        const text = self.source[start..self.pos];
+
+        // Skip closing quote
+        self.advance();
+
+        return Token{ .type = .string, .text = text, .line = start_line };
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: Read Number Literal
+    // -------------------------------------------------------------------------
+    //
+    // Numbers are sequences of digits, optionally prefixed with a minus sign.
+    // We store the text; parsing to i64 happens later.
+    // -------------------------------------------------------------------------
+
+    fn readNumber(self: *Lexer) Token {
+        const start = self.pos;
+        const start_line = self.line;
+
+        // Handle optional minus sign
+        if (self.peek() == '-') {
+            self.advance();
+        }
+
+        // Read digits
+        while (!self.isAtEnd() and isDigit(self.peek())) {
+            self.advance();
+        }
+
+        return Token{ .type = .integer, .text = self.source[start..self.pos], .line = start_line };
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: Read Identifier
+    // -------------------------------------------------------------------------
+    //
+    // Identifiers start with a letter or underscore, then contain letters,
+    // digits, or underscores.
+    //
+    // Keywords (like `add`, `jump`, `label`) are lexed as identifiers.
+    // The parser will check if an identifier is a keyword.
+    // -------------------------------------------------------------------------
+
+    fn readIdentifier(self: *Lexer) Token {
+        const start = self.pos;
+        const start_line = self.line;
+
+        while (!self.isAtEnd() and isIdentifierChar(self.peek())) {
+            self.advance();
+        }
+
+        return Token{ .type = .identifier, .text = self.source[start..self.pos], .line = start_line };
+    }
+
+    // -------------------------------------------------------------------------
+    // Low-Level Helpers
+    // -------------------------------------------------------------------------
+
+    fn peek(self: *Lexer) u8 {
+        return self.source[self.pos];
+    }
+
+    fn advance(self: *Lexer) void {
+        self.pos += 1;
+    }
+
+    fn isAtEnd(self: *Lexer) bool {
+        return self.pos >= self.source.len;
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Character Classification Functions
+// -----------------------------------------------------------------------------
+//
+// These are module-level functions (not methods) since they don't need state.
+// In Zig, this is idiomatic — not everything needs to be a method.
+// -----------------------------------------------------------------------------
+
+fn isDigit(c: u8) bool {
+    return c >= '0' and c <= '9';
+}
+
+fn isIdentifierStart(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or
+        (c >= 'A' and c <= 'Z') or
+        c == '_';
+}
+
+fn isIdentifierChar(c: u8) bool {
+    return isIdentifierStart(c) or isDigit(c);
+}
+```
+
+**Zig Concepts Introduced:**
+
+- `*Lexer` vs `Lexer` — The asterisk means "pointer to". Methods that modify the lexer take `self: *Lexer`. Methods that only read take `self: Lexer` (a copy, but since `Lexer` contains only a slice and two integers, copying is cheap). We use pointer here because we modify `pos` and `line`.
+
+- `error.UnexpectedCharacter` — Error values. In Zig, errors are their own type. You can define error sets, but it's common to just use inferred error sets with `!ReturnType`.
+
+- Module-level functions — `isDigit` isn't a method on any struct. It's just a function in the module. This is normal in Zig.
+
+### Testing the Lexer
+
+Update `main.zig`:
+
+```zig
+const std = @import("std");
+const Lexer = @import("lexer.zig").Lexer;
+
+pub fn main() !void {
+    const stdout = std.io.getStdOut().writer();
+
+    const source =
+        \\set x 10
+        \\add x 5 x  # add 5 to x
+        \\print x
+    ;
+
+    var lexer = Lexer.init(source);
+
+    while (true) {
+        const token = try lexer.next();
+        try stdout.print("Line {}: {s} \"{s}\"\n", .{
+            token.line,
+            @tagName(token.type),
+            token.text,
+        });
+        if (token.type == .eof) break;
+    }
+}
+```
+
+**Zig Concept:**
+
+- `\\` strings — Multi-line string literals. Each `\\` starts a new line, and the string doesn't include the actual newlines in your source code between lines. But it DOES include newlines where the lines end.
+
+Wait, that's confusing. Let me clarify: `\\` strings are "raw" and each line starts with `\\`. The result includes newlines *within* the string content. So the source above is equivalent to `"set x 10\nadd x 5 x  # add 5 to x\nprint x"`.
+
+Expected output:
+```
+Line 1: identifier "set"
+Line 1: identifier "x"
+Line 1: integer "10"
+Line 1: newline "
+"
+Line 2: identifier "add"
+Line 2: identifier "x"
+Line 2: integer "5"
+Line 2: identifier "x"
+Line 2: newline "
+"
+Line 3: identifier "print"
+Line 3: identifier "x"
+Line 3: eof ""
+```
+
+---
+
+## 4. The Parser
+
+The parser transforms tokens into structured instructions. For Pebble, this is straightforward — we're building a list of instructions, not a tree.
+
+### What is an Instruction?
+
+Each line becomes one `Instruction`:
+
+```
+set x 10        →  Instruction{ .opcode = .set, .operands = ["x", "10"] }
+add a b c       →  Instruction{ .opcode = .add, .operands = ["a", "b", "c"] }
+label loop      →  Instruction{ .opcode = .label, .operands = ["loop"] }
+```
+
+### The Label Problem
+
+Control flow (`jump`, `jumpif`, `call`) references labels by name. But when we encounter `jump loop`, we might not have seen `label loop` yet!
+
+**Solution:** Two-pass parsing.
+1. **First pass:** Parse all instructions, record label positions
+2. **Second pass:** Resolve label names to instruction indices
+
+For simplicity, we'll do this in one pass by storing labels in a hash map, then resolving jumps after parsing.
+
+Create `src/parser.zig`:
+
+```zig
+// =============================================================================
+// parser.zig - Parser for Pebble
+// =============================================================================
+//
+// The parser converts tokens into a list of instructions. This is simple
+// because Pebble has no nesting — each line is one instruction.
+//
+// The tricky part is labels. When we see `jump foo`, we need to know where
+// `foo` is. We solve this by:
+//   1. Parsing all instructions, storing labels in a map
+//   2. After parsing, resolving label names to instruction indices
+//
+// This means jump targets are stored as indices, not names, in the final
+// instruction list. This makes the interpreter faster and simpler.
+// =============================================================================
+
+const std = @import("std");
+const Lexer = @import("lexer.zig").Lexer;
+const Token = @import("lexer.zig").Token;
+const TokenType = @import("lexer.zig").TokenType;
+
+// -----------------------------------------------------------------------------
+// Opcodes
+// -----------------------------------------------------------------------------
+//
+// Every instruction has an opcode that identifies what it does.
+// Using an enum gives us type safety and exhaustiveness checking in switches.
+// -----------------------------------------------------------------------------
+
+pub const Opcode = enum {
+    // Variables
+    set,    // set <var> <value>
+    copy,   // copy <src> <dest>
+
+    // Arithmetic
+    add,    // add <a> <b> <dest>
+    sub,    // sub <a> <b> <dest>
+    mul,    // mul <a> <b> <dest>
+    div,    // div <a> <b> <dest>
+    mod,    // mod <a> <b> <dest>
+
+    // Comparison (sets flag)
+    eq,     // eq <a> <b>
+    neq,    // neq <a> <b>
+    lt,     // lt <a> <b>
+    gt,     // gt <a> <b>
+
+    // String operations
+    concat, // concat <a> <b> <dest>
+    len,    // len <source> <dest>
+
+    // Array operations
+    array,  // array <name> <size>
+    geta,   // geta <arr> <index> <dest>
+    seta,   // seta <arr> <index> <value>
+
+    // I/O
+    print,  // print <value>
+    read,   // read <prompt> <dest>
+
+    // Control flow
+    label,  // label <name>       (pseudo-instruction, removed after parsing)
+    jump,   // jump <label>
+    jumpif, // jumpif <label>
+    jumpnot,// jumpnot <label>
+    call,   // call <label>
+    ret,    // ret
+
+    // Misc
+    halt,   // halt
+};
+
+// -----------------------------------------------------------------------------
+// Operand
+// -----------------------------------------------------------------------------
+//
+// An operand is either:
+//   - An identifier (variable name or label name)
+//   - An integer literal
+//   - A string literal
+//
+// We use a tagged union again. Notice how this pattern recurs!
+// -----------------------------------------------------------------------------
+
+pub const Operand = union(enum) {
+    identifier: []const u8,
+    integer: i64,
+    string: []const u8,
+
+    // For debugging
+    pub fn format(
+        self: Operand,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .identifier => |s| try writer.print("id:{s}", .{s}),
+            .integer => |n| try writer.print("int:{d}", .{n}),
+            .string => |s| try writer.print("str:\"{s}\"", .{s}),
+        }
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Instruction
+// -----------------------------------------------------------------------------
+//
+// A parsed instruction with opcode and operands.
+// We store up to 3 operands (the max any instruction needs).
+//
+// Using an array instead of individual fields keeps things uniform.
+// The `operand_count` tells us how many are valid.
+// -----------------------------------------------------------------------------
+
+pub const Instruction = struct {
+    opcode: Opcode,
+    operands: [3]Operand,
+    operand_count: u8,
+    line: usize,  // Source line for error messages
+
+    // Helper to get an operand safely
+    pub fn getOperand(self: Instruction, index: usize) ?Operand {
+        if (index >= self.operand_count) return null;
+        return self.operands[index];
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Parser
+// -----------------------------------------------------------------------------
+
+pub const Parser = struct {
+    lexer: Lexer,
+    current: Token,
+    allocator: std.mem.Allocator,
+
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
+    pub fn init(source: []const u8, allocator: std.mem.Allocator) !Parser {
+        var lexer = Lexer.init(source);
+        const first_token = try lexer.next();
+
+        return Parser{
+            .lexer = lexer,
+            .current = first_token,
+            .allocator = allocator,
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Main Parse Function
+    // -------------------------------------------------------------------------
+    //
+    // Returns a list of instructions and a map of label names to indices.
+    // The caller can use the label map to resolve jump targets.
+    // -------------------------------------------------------------------------
+
+    pub fn parse(self: *Parser) !ParseResult {
+        var instructions = std.ArrayList(Instruction).init(self.allocator);
+        var labels = std.StringHashMap(usize).init(self.allocator);
+
+        while (self.current.type != .eof) {
+            // Skip blank lines
+            if (self.current.type == .newline) {
+                _ = try self.advance();
+                continue;
+            }
+
+            const inst = try self.parseInstruction();
+
+            // If it's a label, record its position but don't add to instruction list
+            if (inst.opcode == .label) {
+                const label_name = inst.operands[0].identifier;
+                try labels.put(label_name, instructions.items.len);
+            } else {
+                try instructions.append(inst);
+            }
+        }
+
+        return ParseResult{
+            .instructions = instructions,
+            .labels = labels,
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Parse Single Instruction
+    // -------------------------------------------------------------------------
+
+    fn parseInstruction(self: *Parser) !Instruction {
+        // First token should be the opcode (an identifier)
+        if (self.current.type != .identifier) {
+            std.debug.print("Expected instruction at line {}, got {s}\n", .{
+                self.current.line,
+                @tagName(self.current.type),
+            });
+            return error.ExpectedInstruction;
+        }
+
+        const opcode_str = self.current.text;
+        const line = self.current.line;
+        _ = try self.advance();
+
+        // Convert string to opcode
+        const opcode = stringToOpcode(opcode_str) orelse {
+            std.debug.print("Unknown instruction '{s}' at line {}\n", .{ opcode_str, line });
+            return error.UnknownInstruction;
+        };
+
+        // Parse operands based on opcode
+        const expected_operands = opcodeOperandCount(opcode);
+        var operands: [3]Operand = undefined;
+        var count: u8 = 0;
+
+        while (count < expected_operands) {
+            if (self.current.type == .newline or self.current.type == .eof) {
+                std.debug.print("Expected operand at line {}\n", .{line});
+                return error.MissingOperand;
+            }
+
+            operands[count] = try self.parseOperand();
+            count += 1;
+        }
+
+        // Expect newline or EOF after instruction
+        if (self.current.type != .newline and self.current.type != .eof) {
+            std.debug.print("Expected end of line at line {}\n", .{line});
+            return error.ExpectedEndOfLine;
+        }
+
+        // Consume the newline
+        if (self.current.type == .newline) {
+            _ = try self.advance();
+        }
+
+        return Instruction{
+            .opcode = opcode,
+            .operands = operands,
+            .operand_count = count,
+            .line = line,
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Parse Single Operand
+    // -------------------------------------------------------------------------
+
+    fn parseOperand(self: *Parser) !Operand {
+        const token = self.current;
+        _ = try self.advance();
+
+        return switch (token.type) {
+            .identifier => Operand{ .identifier = token.text },
+            .integer => Operand{
+                .integer = std.fmt.parseInt(i64, token.text, 10) catch {
+                    std.debug.print("Invalid integer '{s}' at line {}\n", .{ token.text, token.line });
+                    return error.InvalidInteger;
+                },
+            },
+            .string => Operand{ .string = token.text },
+            else => {
+                std.debug.print("Unexpected token type for operand at line {}\n", .{token.line});
+                return error.UnexpectedToken;
+            },
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Token Advancement
+    // -------------------------------------------------------------------------
+
+    fn advance(self: *Parser) !Token {
+        const prev = self.current;
+        self.current = try self.lexer.next();
+        return prev;
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Parse Result
+// -----------------------------------------------------------------------------
+//
+// The parser returns both the instructions and the label map.
+// This bundles them together for convenience.
+// -----------------------------------------------------------------------------
+
+pub const ParseResult = struct {
+    instructions: std.ArrayList(Instruction),
+    labels: std.StringHashMap(usize),
+};
+
+// -----------------------------------------------------------------------------
+// Helper Functions
+// -----------------------------------------------------------------------------
+
+fn stringToOpcode(s: []const u8) ?Opcode {
+    const map = std.StaticStringMap(Opcode).initComptime(.{
+        .{ "set", .set },
+        .{ "copy", .copy },
+        .{ "add", .add },
+        .{ "sub", .sub },
+        .{ "mul", .mul },
+        .{ "div", .div },
+        .{ "mod", .mod },
+        .{ "eq", .eq },
+        .{ "neq", .neq },
+        .{ "lt", .lt },
+        .{ "gt", .gt },
+        .{ "concat", .concat },
+        .{ "len", .len },
+        .{ "array", .array },
+        .{ "geta", .geta },
+        .{ "seta", .seta },
+        .{ "print", .print },
+        .{ "read", .read },
+        .{ "label", .label },
+        .{ "jump", .jump },
+        .{ "jumpif", .jumpif },
+        .{ "jumpnot", .jumpnot },
+        .{ "call", .call },
+        .{ "ret", .ret },
+        .{ "halt", .halt },
+    });
+
+    return map.get(s);
+}
+
+fn opcodeOperandCount(op: Opcode) u8 {
+    return switch (op) {
+        .ret, .halt => 0,
+        .label, .jump, .jumpif, .jumpnot, .call, .print => 1,
+        .set, .copy, .eq, .neq, .lt, .gt, .len, .array, .read => 2,
+        .add, .sub, .mul, .div, .mod, .concat, .geta, .seta => 3,
+    };
+}
+```
+
+**Zig Concepts Introduced:**
+
+- `std.ArrayList` — A dynamic array. Similar to `Vec<T>` in Rust or `std::vector<T>` in C++.
+
+- `std.StringHashMap` — A hash map with string keys. Zig's standard library has several map types for different needs.
+
+- `std.StaticStringMap` — A compile-time hash map. `initComptime` builds the map at compile time, so lookups are fast at runtime.
+
+- `std.mem.Allocator` — Zig has no hidden allocations. You explicitly pass allocators where memory is needed. This is verbose but gives you complete control.
+
+- `undefined` — Uninitialized memory. We use this for the `operands` array since we'll fill it in immediately. Using `undefined` is dangerous if you forget to initialize!
+
+### Testing the Parser
+
+Update `main.zig`:
+
+```zig
+const std = @import("std");
+const Parser = @import("parser.zig").Parser;
+
+pub fn main() !void {
+    // We need an allocator for dynamic data structures
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const stdout = std.io.getStdOut().writer();
+
+    const source =
+        \\set x 10
+        \\set y 20
+        \\add x y result
+        \\print result
+        \\halt
+    ;
+
+    var parser = try Parser.init(source, allocator);
+    const result = try parser.parse();
+    defer result.instructions.deinit();
+    defer result.labels.deinit();
+
+    try stdout.print("Parsed {} instructions:\n", .{result.instructions.items.len});
+    for (result.instructions.items, 0..) |inst, i| {
+        try stdout.print("  {}: {s}", .{ i, @tagName(inst.opcode) });
+        for (0..inst.operand_count) |j| {
+            try stdout.print(" {}", .{inst.operands[j]});
+        }
+        try stdout.print("\n", .{});
+    }
+}
+```
+
+**Zig Concepts:**
+
+- `GeneralPurposeAllocator` — A general-purpose allocator suitable for most uses. It's slower than specialized allocators but catches memory bugs in debug mode.
+
+- `defer` — Schedules code to run when the current scope exits. `defer result.instructions.deinit()` ensures we free memory even if we return early due to an error.
+
+Expected output:
+```
+Parsed 5 instructions:
+  0: set id:x int:10
+  1: set id:y int:20
+  2: add id:x id:y id:result
+  3: print id:result
+  4: halt
+```
+
+---
+
+## 5. The Interpreter
+
+Now the fun part! The interpreter executes our parsed instructions.
+
+### The Execution Model
+
+```
+┌─────────────────────────────────────────────┐
+│               Interpreter                    │
+├─────────────────────────────────────────────┤
+│  instructions: [Instruction]   (code)       │
+│  pc: usize                     (current)    │
+│  variables: HashMap(str→Value) (storage)    │
+│  call_stack: [usize]           (returns)    │
+│  flag: bool                    (comparison) │
+│  running: bool                 (halt?)      │
+└─────────────────────────────────────────────┘
+```
+
+The main loop:
+```
+while running:
+    instruction = instructions[pc]
+    execute(instruction)
+    pc += 1  (unless jump)
+```
+
+Create `src/interpreter.zig`:
+
+```zig
+// =============================================================================
+// interpreter.zig - Pebble Interpreter
+// =============================================================================
+//
+// The interpreter executes parsed instructions. It maintains:
+//   - A program counter (pc) pointing to the current instruction
+//   - A hash map of variables
+//   - A call stack for subroutine returns
+//   - A flag for conditional jumps
+//
+// The main loop fetches an instruction, executes it, and advances pc.
+// Jump instructions modify pc directly instead of incrementing.
+// =============================================================================
+
+const std = @import("std");
+const Value = @import("value.zig").Value;
+const Instruction = @import("parser.zig").Instruction;
+const Opcode = @import("parser.zig").Opcode;
+const Operand = @import("parser.zig").Operand;
+
+// -----------------------------------------------------------------------------
+// Runtime Errors
+// -----------------------------------------------------------------------------
+//
+// We define specific error types for different runtime failures.
+// This helps with debugging and could enable better error messages.
+// -----------------------------------------------------------------------------
+
+pub const RuntimeError = error{
+    UndefinedVariable,
+    TypeMismatch,
+    DivisionByZero,
+    InvalidArrayIndex,
+    StackUnderflow,
+    UnresolvedLabel,
+    OutOfMemory,
+    InvalidInput,
+};
+
+// -----------------------------------------------------------------------------
+// Interpreter
+// -----------------------------------------------------------------------------
+
+pub const Interpreter = struct {
+    // The program
+    instructions: []const Instruction,
+    labels: std.StringHashMap(usize),
+
+    // Execution state
+    pc: usize,                              // Program counter
+    variables: std.StringHashMap(Value),    // Variable storage
+    call_stack: std.ArrayList(usize),       // Return addresses
+    flag: bool,                             // Last comparison result
+    running: bool,                          // Continue executing?
+
+    // Resources
+    allocator: std.mem.Allocator,
+    stdout: std.fs.File.Writer,
+    stdin: std.fs.File.Reader,
+
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
+    pub fn init(
+        instructions: []const Instruction,
+        labels: std.StringHashMap(usize),
+        allocator: std.mem.Allocator,
+    ) Interpreter {
+        return Interpreter{
+            .instructions = instructions,
+            .labels = labels,
+            .pc = 0,
+            .variables = std.StringHashMap(Value).init(allocator),
+            .call_stack = std.ArrayList(usize).init(allocator),
+            .flag = false,
+            .running = true,
+            .allocator = allocator,
+            .stdout = std.io.getStdOut().writer(),
+            .stdin = std.io.getStdIn().reader(),
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Cleanup
+    // -------------------------------------------------------------------------
+
+    pub fn deinit(self: *Interpreter) void {
+        // Free any arrays stored in variables
+        var it = self.variables.valueIterator();
+        while (it.next()) |value| {
+            if (value.* == .array) {
+                value.array.deinit();
+            }
+        }
+        self.variables.deinit();
+        self.call_stack.deinit();
+    }
+
+    // -------------------------------------------------------------------------
+    // Run the Program
+    // -------------------------------------------------------------------------
+    //
+    // This is the main loop. It continues until:
+    //   - A `halt` instruction sets running = false
+    //   - We run past the end of instructions
+    //   - An error occurs
+    // -------------------------------------------------------------------------
+
+    pub fn run(self: *Interpreter) !void {
+        while (self.running and self.pc < self.instructions.len) {
+            const inst = self.instructions[self.pc];
+            try self.execute(inst);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Execute Single Instruction
+    // -------------------------------------------------------------------------
+    //
+    // This is a big switch on the opcode. Each case handles one instruction.
+    // Some instructions advance pc automatically, others (jumps) set it.
+    // -------------------------------------------------------------------------
+
+    fn execute(self: *Interpreter, inst: Instruction) !void {
+        switch (inst.opcode) {
+            // -----------------------------------------------------------------
+            // Variables
+            // -----------------------------------------------------------------
+
+            .set => {
+                // set <var> <value>
+                const var_name = inst.operands[0].identifier;
+                const value = try self.resolveOperand(inst.operands[1]);
+                try self.variables.put(var_name, value);
+                self.pc += 1;
+            },
+
+            .copy => {
+                // copy <src> <dest>
+                const src_name = inst.operands[0].identifier;
+                const dest_name = inst.operands[1].identifier;
+                const value = self.variables.get(src_name) orelse
+                    return RuntimeError.UndefinedVariable;
+                try self.variables.put(dest_name, value);
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // Arithmetic
+            // -----------------------------------------------------------------
+
+            .add, .sub, .mul, .div, .mod => {
+                const a = try self.resolveToInteger(inst.operands[0]);
+                const b = try self.resolveToInteger(inst.operands[1]);
+                const dest = inst.operands[2].identifier;
+
+                const result: i64 = switch (inst.opcode) {
+                    .add => a + b,
+                    .sub => a - b,
+                    .mul => a * b,
+                    .div => if (b == 0) return RuntimeError.DivisionByZero else @divTrunc(a, b),
+                    .mod => if (b == 0) return RuntimeError.DivisionByZero else @mod(a, b),
+                    else => unreachable,
+                };
+
+                try self.variables.put(dest, Value{ .integer = result });
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // Comparisons
+            // -----------------------------------------------------------------
+
+            .eq, .neq, .lt, .gt => {
+                const a = try self.resolveOperand(inst.operands[0]);
+                const b = try self.resolveOperand(inst.operands[1]);
+
+                // For simplicity, only compare integers
+                const a_int = a.asInteger() orelse return RuntimeError.TypeMismatch;
+                const b_int = b.asInteger() orelse return RuntimeError.TypeMismatch;
+
+                self.flag = switch (inst.opcode) {
+                    .eq => a_int == b_int,
+                    .neq => a_int != b_int,
+                    .lt => a_int < b_int,
+                    .gt => a_int > b_int,
+                    else => unreachable,
+                };
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // Strings
+            // -----------------------------------------------------------------
+
+            .concat => {
+                const a = try self.resolveToString(inst.operands[0]);
+                const b = try self.resolveToString(inst.operands[1]);
+                const dest = inst.operands[2].identifier;
+
+                // Allocate new string for result
+                const result = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ a, b });
+                try self.variables.put(dest, Value{ .string = result });
+                self.pc += 1;
+            },
+
+            .len => {
+                const source = try self.resolveOperand(inst.operands[0]);
+                const dest = inst.operands[1].identifier;
+
+                const length: i64 = switch (source) {
+                    .string => |s| @intCast(s.len),
+                    .array => |arr| @intCast(arr.items.len),
+                    else => return RuntimeError.TypeMismatch,
+                };
+
+                try self.variables.put(dest, Value{ .integer = length });
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // Arrays
+            // -----------------------------------------------------------------
+
+            .array => {
+                const name = inst.operands[0].identifier;
+                const size = try self.resolveToInteger(inst.operands[1]);
+
+                var arr = std.ArrayList(Value).init(self.allocator);
+                // Pre-fill with zeros
+                try arr.appendNTimes(Value{ .integer = 0 }, @intCast(size));
+
+                try self.variables.put(name, Value{ .array = arr });
+                self.pc += 1;
+            },
+
+            .seta => {
+                // seta <arr> <index> <value>
+                const arr_name = inst.operands[0].identifier;
+                const index = try self.resolveToInteger(inst.operands[1]);
+                const value = try self.resolveOperand(inst.operands[2]);
+
+                const entry = self.variables.getPtr(arr_name) orelse
+                    return RuntimeError.UndefinedVariable;
+
+                if (entry.* != .array) return RuntimeError.TypeMismatch;
+
+                const idx: usize = @intCast(index);
+                if (idx >= entry.array.items.len) return RuntimeError.InvalidArrayIndex;
+
+                entry.array.items[idx] = value;
+                self.pc += 1;
+            },
+
+            .geta => {
+                // geta <arr> <index> <dest>
+                const arr_name = inst.operands[0].identifier;
+                const index = try self.resolveToInteger(inst.operands[1]);
+                const dest = inst.operands[2].identifier;
+
+                const arr_val = self.variables.get(arr_name) orelse
+                    return RuntimeError.UndefinedVariable;
+
+                if (arr_val != .array) return RuntimeError.TypeMismatch;
+
+                const idx: usize = @intCast(index);
+                if (idx >= arr_val.array.items.len) return RuntimeError.InvalidArrayIndex;
+
+                const value = arr_val.array.items[idx];
+                try self.variables.put(dest, value);
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // I/O
+            // -----------------------------------------------------------------
+
+            .print => {
+                const value = try self.resolveOperand(inst.operands[0]);
+                try self.stdout.print("{}\n", .{value});
+                self.pc += 1;
+            },
+
+            .read => {
+                // read <prompt> <dest>
+                const prompt = switch (inst.operands[0]) {
+                    .string => |s| s,
+                    else => return RuntimeError.TypeMismatch,
+                };
+                const dest = inst.operands[1].identifier;
+
+                // Display prompt
+                try self.stdout.print("{s}", .{prompt});
+
+                // Read line
+                var buf: [256]u8 = undefined;
+                const line = self.stdin.readUntilDelimiter(&buf, '\n') catch |err| {
+                    if (err == error.EndOfStream) {
+                        return RuntimeError.InvalidInput;
+                    }
+                    return RuntimeError.InvalidInput;
+                };
+
+                // Try to parse as integer, otherwise store as string
+                if (std.fmt.parseInt(i64, line, 10)) |num| {
+                    try self.variables.put(dest, Value{ .integer = num });
+                } else |_| {
+                    // Store as string (we need to allocate since buf is temporary)
+                    const str = try self.allocator.dupe(u8, line);
+                    try self.variables.put(dest, Value{ .string = str });
+                }
+
+                self.pc += 1;
+            },
+
+            // -----------------------------------------------------------------
+            // Control Flow
+            // -----------------------------------------------------------------
+
+            .label => {
+                // Labels are handled during parsing; they shouldn't appear here
+                self.pc += 1;
+            },
+
+            .jump => {
+                const target = inst.operands[0].identifier;
+                self.pc = self.labels.get(target) orelse
+                    return RuntimeError.UnresolvedLabel;
+            },
+
+            .jumpif => {
+                if (self.flag) {
+                    const target = inst.operands[0].identifier;
+                    self.pc = self.labels.get(target) orelse
+                        return RuntimeError.UnresolvedLabel;
+                } else {
+                    self.pc += 1;
+                }
+            },
+
+            .jumpnot => {
+                if (!self.flag) {
+                    const target = inst.operands[0].identifier;
+                    self.pc = self.labels.get(target) orelse
+                        return RuntimeError.UnresolvedLabel;
+                } else {
+                    self.pc += 1;
+                }
+            },
+
+            .call => {
+                const target = inst.operands[0].identifier;
+                // Push return address
+                try self.call_stack.append(self.pc + 1);
+                // Jump to target
+                self.pc = self.labels.get(target) orelse
+                    return RuntimeError.UnresolvedLabel;
+            },
+
+            .ret => {
+                if (self.call_stack.items.len == 0) {
+                    return RuntimeError.StackUnderflow;
+                }
+                self.pc = self.call_stack.pop();
+            },
+
+            .halt => {
+                self.running = false;
+            },
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Value Resolution Helpers
+    // -------------------------------------------------------------------------
+    //
+    // These convert operands to values. An operand might be:
+    //   - A literal (integer or string) → use directly
+    //   - An identifier → look up in variables
+    // -------------------------------------------------------------------------
+
+    fn resolveOperand(self: *Interpreter, op: Operand) !Value {
+        return switch (op) {
+            .integer => |n| Value{ .integer = n },
+            .string => |s| Value{ .string = s },
+            .identifier => |name| self.variables.get(name) orelse
+                RuntimeError.UndefinedVariable,
+        };
+    }
+
+    fn resolveToInteger(self: *Interpreter, op: Operand) !i64 {
+        const value = try self.resolveOperand(op);
+        return value.asInteger() orelse RuntimeError.TypeMismatch;
+    }
+
+    fn resolveToString(self: *Interpreter, op: Operand) ![]const u8 {
+        const value = try self.resolveOperand(op);
+        return value.asString() orelse RuntimeError.TypeMismatch;
+    }
+};
+```
+
+**Zig Concepts Introduced:**
+
+- `error{...}` — A custom error set. We list all possible runtime errors. This enables precise error handling.
+
+- `@intCast` — Explicit integer conversion. Zig doesn't implicitly convert between integer types. You must be explicit, which prevents subtle bugs.
+
+- `@divTrunc` — Integer division that truncates toward zero. Zig has multiple division functions (`@divFloor`, `@divExact`) for different rounding behaviors.
+
+- `unreachable` — Tells the compiler "this case should never happen". If it does, it's a bug and the program crashes with a helpful message.
+
+- `getPtr` vs `get` — `get` returns a copy of the value; `getPtr` returns a pointer to it. We need `getPtr` for arrays so we can modify them in place.
+
+---
+
+## 6. Putting It All Together
+
+Let's update `main.zig` to tie everything together:
+
+```zig
+// =============================================================================
+// main.zig - Pebble Interpreter Entry Point
+// =============================================================================
+
+const std = @import("std");
+const Parser = @import("parser.zig").Parser;
+const Interpreter = @import("interpreter.zig").Interpreter;
+
+pub fn main() !void {
+    // Set up allocator
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Get command line arguments
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len < 2) {
+        std.debug.print("Usage: pebble <file.pbl>\n", .{});
+        return;
+    }
+
+    // Read source file
+    const filename = args[1];
+    const source = std.fs.cwd().readFileAlloc(allocator, filename, 1024 * 1024) catch |err| {
+        std.debug.print("Error reading '{s}': {}\n", .{ filename, err });
+        return;
+    };
+    defer allocator.free(source);
+
+    // Parse
+    var parser = try Parser.init(source, allocator);
+    const parse_result = try parser.parse();
+    defer parse_result.instructions.deinit();
+    defer parse_result.labels.deinit();
+
+    // Run
+    var interp = Interpreter.init(
+        parse_result.instructions.items,
+        parse_result.labels,
+        allocator,
+    );
+    defer interp.deinit();
+
+    interp.run() catch |err| {
+        std.debug.print("Runtime error: {}\n", .{err});
+        return;
+    };
+}
+```
+
+---
+
+## 7. Test Programs
+
+Create some `.pbl` files to test:
+
+### hello.pbl
+```
+set msg "Hello, World!"
+print msg
+halt
+```
+
+### countdown.pbl
+```
+set n 5
+
+label loop
+  print n
+  sub n 1 n
+  gt n 0
+  jumpif loop
+
+print "Liftoff!"
+halt
+```
+
+### factorial.pbl
+```
+read "Enter a number: " n
+copy n result
+sub n 1 n
+
+label loop
+  gt n 1
+  jumpnot done
+  mul result n result
+  sub n 1 n
+  jump loop
+
+label done
+  print result
+  halt
+```
+
+### array_sum.pbl
+```
+array nums 5
+seta nums 0 10
+seta nums 1 20
+seta nums 2 30
+seta nums 3 40
+seta nums 4 50
+
+set sum 0
+set i 0
+len nums size
+
+label loop
+  lt i size
+  jumpnot done
+  geta nums i val
+  add sum val sum
+  add i 1 i
+  jump loop
+
+label done
+  print sum
+  halt
+```
+
+---
+
+## 8. What You've Learned
+
+### Zig Concepts
+- Tagged unions (`union(enum)`)
+- Error handling (`!`, `try`, `catch`, error sets)
+- Memory management (allocators, `defer`)
+- Slices and strings (`[]const u8`)
+- Structs with methods
+- Hash maps and array lists
+- Compile-time evaluation (`comptime`, `StaticStringMap`)
+
+### Language Implementation Concepts
+- **Lexing:** Converting text to tokens
+- **Parsing:** Building structured representations from tokens
+- **Symbol tables:** Mapping names to values (variables) or locations (labels)
+- **Interpretation:** Walking the instruction list and executing
+- **Control flow:** Implementing jumps, calls, and returns with a call stack
+- **Type representation:** Tagged unions for dynamic typing
+
+---
+
+## 9. Exercises
+
+Try these extensions to deepen your understanding:
+
+1. **Add `<=` and `>=` comparisons**
+
+2. **Add a `not` instruction** that flips the flag
+
+3. **Improve error messages** to show the source line
+
+4. **Add a REPL** — read and execute lines interactively
+
+5. **Add local variables** — variables scoped to function calls
+
+6. **Add escape sequences** in strings (`\n`, `\"`, etc.)
+
+---
+
+Happy learning! 🪨

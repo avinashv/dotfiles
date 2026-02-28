@@ -1,0 +1,36 @@
+;;; -*- coding: utf-8; mode: lisp-data -*-
+(("/Users/avinashv/Development/haskell/" . 149)
+ ("/Users/avinashv/Development/haskell/hello.hs" . 75)
+ ("/Users/avinashv/.config/emacs/init.el" . 1598)
+ ("/Users/avinashv/Development/pebble-lang/"
+  (dired-filename . "/Users/avinashv/Development/pebble-lang/src"))
+ ("/Users/avinashv/Development/pebble-lang/src/"
+  (dired-filename
+   . "/Users/avinashv/Development/pebble-lang/src/interpreter.c"))
+ ("/Users/avinashv/Development/pebble-lang/src/interpreter.c" . 1351)
+ ("/Users/avinashv/Development/qbe-1.2/rv64/"
+  (dired-filename . "/Users/avinashv/Development/qbe-1.2/rv64/abi.c"))
+ ("/Users/avinashv/Development/qbe-1.2/amd64/"
+  (dired-filename . "/Users/avinashv/Development/qbe-1.2/amd64/all.h"))
+ ("/Users/avinashv/Development/qbe-1.2/arm64/"
+  (dired-filename . "/Users/avinashv/Development/qbe-1.2"))
+ ("/Users/avinashv/Development/qbe-1.2/" . 1985)
+ ("/Users/avinashv/Development/qbe-1.2/minic/"
+  (dired-filename
+   . "/Users/avinashv/Development/qbe-1.2/minic/minic.y"))
+ ("/Users/avinashv/.config/emacs/"
+  (dired-filename . "/Users/avinashv/.config/emacs/init.el"))
+ ("/Users/avinashv/Development/qbe-1.2/Makefile" . 1927)
+ ("/Users/avinashv/Development/qbe-1.2/minic/minic.y" . 915)
+ ("/Users/avinashv/Development/"
+  (dired-filename . "/Users/avinashv/Development/raylib"))
+ ("/Users/avinashv/Development/raylib/"
+  (dired-filename . "/Users/avinashv/Development/raylib/snake"))
+ ("/Users/avinashv/Development/raylib/snake/src/"
+  (dired-filename
+   . "/Users/avinashv/Development/raylib/snake/src/main.c"))
+ ("/Users/avinashv/Development/raylib/snake/"
+  (dired-filename
+   . "/Users/avinashv/Development/raylib/snake/snake_tutorial.md"))
+ ("/Users/avinashv/Development/raylib/snake/snake_tutorial.md" . 29593)
+ ("/Users/avinashv/Development/raylib/snake/src/main.c" . 383))

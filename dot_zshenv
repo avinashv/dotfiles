@@ -1,0 +1,4 @@
+. "$HOME/.cargo/env"
+
+# uv
+export PATH="/Users/avinashv/.local/bin:$PATH"

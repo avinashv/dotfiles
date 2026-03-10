@@ -53,10 +53,12 @@ return {
         wk.add({
           { "<leader>b", group = "buffer" },
           { "<leader>c", group = "code" },
+          { "<leader>cw", group = "workspace" },
           { "<leader>f", group = "find" },
           { "<leader>g", group = "git" },
           { "<leader>s", group = "search" },
           { "<leader>t", group = "toggle" },
+          { "<leader>u", group = "ui" },
           { "<leader>x", group = "diagnostics" },
         })
       end,
@@ -240,14 +242,64 @@ return {
       lazy = false, -- load immediately for dashboard
       config = function()
         local Snacks = require("snacks")
+
+        -- Helper for dashboard cheat sheet entries
+        local function ref(key, desc)
+          return {
+            pane = 2,
+            text = {
+              { "  " .. key, hl = "SnacksDashboardKey", width = 12 },
+              { desc, hl = "SnacksDashboardDesc" },
+            },
+          }
+        end
+
         Snacks.setup({
-          -- Dashboard shown on startup
           dashboard = {
-            enabled = true,
+            width = 64,
+            pane_gap = 4,
+            preset = {
+              keys = {
+                { icon = " ", key = "f", desc = "Find File", action = ":lua Snacks.dashboard.pick('files')" },
+                { icon = " ", key = "g", desc = "Find Text", action = ":lua Snacks.dashboard.pick('live_grep')" },
+                { icon = " ", key = "r", desc = "Recent Files", action = ":lua Snacks.dashboard.pick('oldfiles')" },
+                { icon = " ", key = "n", desc = "New File", action = ":ene | startinsert" },
+                { icon = " ", key = "e", desc = "File Explorer", action = ":Neotree toggle" },
+                { icon = "󰊢 ", key = "G", desc = "Lazygit", action = ":lua Snacks.lazygit()" },
+                { icon = "󰒲 ", key = "L", desc = "Lazy", action = ":Lazy", enabled = package.loaded.lazy ~= nil },
+                { icon = " ", key = "q", desc = "Quit", action = ":qa" },
+              },
+            },
             sections = {
               { section = "header" },
+              -- Left pane: interactive keys and recent files
               { section = "keys", gap = 1, padding = 1 },
-              { section = "recent_files", limit = 8, padding = 1 },
+              { icon = " ", title = "Recent Files", section = "recent_files", indent = 2, padding = 1 },
+              -- Right pane: quick reference cheat sheet
+              { pane = 2, icon = " ", title = "Find & Navigate", padding = 1 },
+              ref("SPC ff", "Find files"),
+              ref("SPC fg", "Grep project"),
+              ref("SPC fr", "Recent files"),
+              ref("SPC e", "File explorer"),
+              ref("s", "Flash jump"),
+              { pane = 2, icon = " ", title = "Code", padding = 1 },
+              ref("gd", "Definition"),
+              ref("gr", "References"),
+              ref("K", "Hover docs"),
+              ref("SPC ca", "Code action"),
+              ref("SPC cr", "Rename"),
+              { pane = 2, icon = "󰊢 ", title = "Git", padding = 1 },
+              ref("SPC gg", "Lazygit"),
+              ref("SPC gs", "Stage hunk"),
+              ref("SPC gb", "Blame line"),
+              ref("SPC gp", "Preview hunk"),
+              ref("]h [h", "Prev/next hunk"),
+              { pane = 2, icon = " ", title = "Diagnostics", padding = 1 },
+              ref("SPC xx", "Toggle list"),
+              ref("]d [d", "Prev/next diag"),
+              ref("SPC cf", "Format buffer"),
+              ref("SPC st", "Search todos"),
+              ref("SPC sk", "Search keymaps"),
               { section = "startup" },
             },
           },
@@ -260,7 +312,7 @@ return {
           -- Lazygit integration
           lazygit = { enabled = true },
         })
-  
+
         -- Snacks keymaps
         vim.keymap.set("n", "<leader>gg", function() Snacks.lazygit() end, { desc = "Open Lazygit" })
         vim.keymap.set("n", "<leader>gl", function() Snacks.lazygit.log() end, { desc = "Lazygit log" })

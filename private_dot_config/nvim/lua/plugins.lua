@@ -127,6 +127,27 @@ return {
         { "<leader>e", "<cmd>Neotree toggle<CR>", desc = "Toggle file explorer" },
         { "<leader>o", "<cmd>Neotree focus<CR>", desc = "Focus file explorer" },
       },
+      -- Eagerly load neo-tree when nvim is opened with a directory argument
+      -- (needed because netrw is disabled, so the directory buffer is orphaned)
+      init = function()
+        vim.api.nvim_create_autocmd("BufEnter", {
+          group = vim.api.nvim_create_augroup("neotree_start_directory", { clear = true }),
+          desc = "Start Neo-tree with directory",
+          once = true,
+          callback = function()
+            if package.loaded["neo-tree"] then
+              return
+            end
+            local argv = vim.fn.argv(0)
+            if argv ~= "" then
+              local stat = vim.uv.fs_stat(argv)
+              if stat and stat.type == "directory" then
+                require("neo-tree")
+              end
+            end
+          end,
+        })
+      end,
       config = function()
         require("neo-tree").setup({
           -- Close neo-tree when opening a file

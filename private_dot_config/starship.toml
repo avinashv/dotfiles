@@ -31,7 +31,7 @@ $character"""
 palette = 'catppuccin_mocha'
 
 [os]
-disabled = true
+disabled = false
 style = "bg:red fg:crust"
 
 [os.symbols]
@@ -76,11 +76,13 @@ truncation_symbol = "…/"
 "Developer" = "󰲋 "
 
 [git_branch]
+disabled = true
 symbol = ""
 style = "bg:yellow"
 format = '[[ $symbol $branch ](fg:crust bg:yellow)]($style)'
 
 [git_status]
+disabled = true
 style = "bg:yellow"
 format = '[[($all_status$ahead_behind )](fg:crust bg:yellow)]($style)'
 

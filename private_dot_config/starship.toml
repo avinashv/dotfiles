@@ -6,7 +6,7 @@ $os\
 $username\
 [](bg:peach fg:red)\
 $directory\
-[](fg:sapphire bg:red)\
+[](fg:peach bg:lavender)\
 $time\
 [ ](fg:lavender)\
 $cmd_duration\

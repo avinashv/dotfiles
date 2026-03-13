@@ -64,3 +64,30 @@ cpout() {
 
 # --- Starship prompt ---
 eval "$(starship init zsh)"
+
+# --- Chezmoi stuff ---
+# Push local chezmoi changes to remote
+chezmoi-update() {
+  if [[ -z "$1" ]]; then
+    echo "Usage: chezmoi-update \"commit message\""
+    return 1
+  fi
+
+  chezmoi re-add && \
+  cd "$(chezmoi source-path)" && \
+  git add -A && \
+  git commit -m "$1" && \
+  git push && \
+  cd - > /dev/null && \
+  chezmoi apply --verbose
+  echo "✅ Changes pushed and applied locally."
+}
+
+# Pull remote chezmoi changes and apply them
+chezmoi-download() {
+  cd "$(chezmoi source-path)" && \
+  git pull && \
+  cd - > /dev/null && \
+  chezmoi apply --verbose
+  echo "✅ Latest changes pulled and applied."
+}

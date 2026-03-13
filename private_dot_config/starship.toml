@@ -31,7 +31,7 @@ $character"""
 palette = 'catppuccin_mocha'
 
 [os]
-disabled = false
+disabled = true
 style = "bg:red fg:crust"
 
 [os.symbols]
@@ -85,56 +85,67 @@ style = "bg:yellow"
 format = '[[($all_status$ahead_behind )](fg:crust bg:yellow)]($style)'
 
 [nodejs]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [c]
+disabled = true
 symbol = " "
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [rust]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [golang]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [php]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [java]
+disabled = true
 symbol = " "
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [kotlin]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [haskell]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version) ](fg:crust bg:green)]($style)'
 
 [python]
+disabled = true
 symbol = ""
 style = "bg:green"
 format = '[[ $symbol( $version)(\(#$virtualenv\)) ](fg:crust bg:green)]($style)'
 
 [docker_context]
+disabled = true
 symbol = ""
 style = "bg:sapphire"
 format = '[[ $symbol( $context) ](fg:crust bg:sapphire)]($style)'
 
 [conda]
+disabled = true
 symbol = "  "
 style = "fg:crust bg:sapphire"
 format = '[$symbol$environment ]($style)'
@@ -147,7 +158,7 @@ style = "bg:lavender"
 format = '[[  $time ](fg:crust bg:lavender)]($style)'
 
 [line_break]
-disabled = true
+disabled = false
 
 [character]
 disabled = false

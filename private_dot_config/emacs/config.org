@@ -1,70 +1,554 @@
-#+TITLE: Emacs Config
+#+TITLE: Emacs Configuration
 #+AUTHOR: Avinash Vora
-#+DESCRIPTION: Avinash's personal Emacs configuration
-#+STARTUP: showeverything
-#+OPTIONS: toc:2
+#+DESCRIPTION: Native-first, minimal Emacs setup. Replaces previous nvim+tmux workflow.
+#+STARTUP: overview
+#+OPTIONS: toc:2 num:nil
 
-* UI (clean, minimal)
+* Philosophy
+
+This config aims to *use Emacs natively*: built-in features over packages,
+native key bindings (no =evil-mode=), =dired= over external file trees,
+=tab-bar-mode= and =desktop-save-mode= over a separate multiplexer.
+
+Non-native packages are added only where the built-in equivalent is
+genuinely insufficient (=magit= for git, =vterm= for a real terminal,
+=lsp-mode= for Mason-like server installation).
+
+Loading is bootstrapped by =init.el=, which calls =org-babel-load-file= on
+this file. After editing, restart Emacs or =M-x org-babel-load-file= the
+config to pick up changes.
+
+* Quick reference (the keys you'll actually use)
+
+| Action                        | Binding         |
+|-------------------------------+-----------------|
+| Find file                     | =C-x C-f=       |
+| Switch buffer                 | =C-x b=         |
+| Save file                     | =C-x C-s=       |
+| Recent files                  | =M-x recentf-open-files= |
+| Find file *in project*        | =C-x p f=       |
+| Grep *in project*             | =C-x p g=       |
+| Switch project buffer         | =C-x p b=       |
+| Switch project                | =C-x p p=       |
+| Open dired                    | =C-x d=         |
+| Jump to dired of current file | =C-x C-j=       |
+| Magit status                  | =C-x g=         |
+| New tab                       | =C-x t 2=       |
+| Switch tab                    | =C-x t t=       |
+| Move between windows          | =Shift+arrow=   |
+| Avy: jump to char             | =M-g c <char>=  |
+| Avy: jump to word             | =M-g w=         |
+| Expand region                 | =C-==           |
+| vterm (current window)        | =C-c v=         |
+| vterm (popup, project-scoped) | =C-`=           |
+| LSP commands                  | =C-c l ...=     |
+| Show all bindings             | =C-h b=         |
+
+* UI
+
+** Quiet startup
 #+begin_src emacs-lisp
 (setq inhibit-startup-message t
-      ring-bell-function 'ignore)
+      ring-bell-function 'ignore
+      initial-scratch-message nil)
+#+end_src
 
-(defun avi/apply-clean-ui (&optional frame)
-  "Disable GUI chrome for FRAME (or current frame) and keep UI clean."
+** Hide GUI chrome
+Done per-frame so =emacsclient= frames pick up the same look.
+#+begin_src emacs-lisp
+(defun avi/clean-frame-ui (&optional frame)
+  "Hide toolbars, scrollbars, menubar; quiet the cursor."
   (with-selected-frame (or frame (selected-frame))
     (when (display-graphic-p)
       (tool-bar-mode -1)
       (scroll-bar-mode -1)
-      (menu-bar-mode -1))
+      (menu-bar-mode -1)
+      (set-fringe-mode 10))
     (blink-cursor-mode -1)))
 
-;; Apply now and to future frames (important for emacsclient)
-(avi/apply-clean-ui)
-(add-hook 'after-make-frame-functions #'avi/apply-clean-ui)
+(avi/clean-frame-ui)
+(add-hook 'after-make-frame-functions #'avi/clean-frame-ui)
+#+end_src
 
+** Modeline (native — no doom-modeline)
+#+begin_src emacs-lisp
 (column-number-mode 1)
 (line-number-mode 1)
+(size-indication-mode 1)
 #+end_src
 
-* Theme (Catppuccin Mocha)
+** Line numbers in code buffers only
 #+begin_src emacs-lisp
-;; Prefer truecolor in terminals that support it
+(global-display-line-numbers-mode 1)
+(dolist (mode '(org-mode-hook
+                term-mode-hook
+                vterm-mode-hook
+                shell-mode-hook
+                eshell-mode-hook
+                dired-mode-hook
+                help-mode-hook
+                magit-status-mode-hook))
+  (add-hook mode (lambda () (display-line-numbers-mode 0))))
+#+end_src
+
+** Theme — Catppuccin Mocha
+Applied per-frame so =emacsclient= frames also pick it up.
+#+begin_src emacs-lisp
 (setenv "COLORTERM" "truecolor")
 
-(defun avi/apply-catppuccin-mocha (&optional frame)
-  "Apply Catppuccin Mocha theme for FRAME (or current frame)."
-  (with-selected-frame (or frame (selected-frame))
-    (require 'catppuccin-theme)
-
-    ;; Some versions expose a flavor variable; set it if present.
-    ;; We do this before loading the theme, and then load/reload defensively.
-    (when (boundp 'catppuccin-flavor)
-      (setq catppuccin-flavor 'mocha))
-
-    (mapc #'disable-theme custom-enabled-themes)
-    (load-theme 'catppuccin :no-confirm)
-
-    ;; If flavor is read at load time in your package version, re-load.
-    (mapc #'disable-theme custom-enabled-themes)
-    (load-theme 'catppuccin :no-confirm)))
-
-(avi/apply-catppuccin-mocha)
-(add-hook 'after-make-frame-functions #'avi/apply-catppuccin-mocha)
+(use-package catppuccin-theme
+  :init
+  (setq catppuccin-flavor 'mocha)
+  :config
+  (defun avi/apply-theme (&optional frame)
+    (with-selected-frame (or frame (selected-frame))
+      (mapc #'disable-theme custom-enabled-themes)
+      (load-theme 'catppuccin :no-confirm)))
+  (avi/apply-theme)
+  (add-hook 'after-make-frame-functions #'avi/apply-theme))
 #+end_src
 
-* Quality-of-life defaults (small, vanilla)
+** Font
+#+begin_src emacs-lisp
+(set-face-attribute 'default nil
+                    :font "MesloLGLDZ Nerd Font Mono"
+                    :height 128)
+#+end_src
+
+* Editing defaults
+
+** Indentation
 #+begin_src emacs-lisp
 (setq-default indent-tabs-mode nil
               tab-width 4
               fill-column 100)
+#+end_src
 
-(global-auto-revert-mode 1)
-(save-place-mode 1)
+** Quality-of-life
+#+begin_src emacs-lisp
+(global-auto-revert-mode 1)                   ;; reload buffer when file changes
+(setq global-auto-revert-non-file-buffers t)  ;; ...also for dired etc.
+(save-place-mode 1)                           ;; remember cursor per file
 (recentf-mode 1)
+(setq recentf-max-saved-items 200)
 (show-paren-mode 1)
+(electric-pair-mode 1)                        ;; auto-pair brackets/quotes
+(delete-selection-mode 1)                     ;; typing replaces selection
+(setq-default truncate-lines nil)             ;; wrap by default
+#+end_src
 
-;; Keep customize noise out of your files
-(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
-(when (file-exists-p custom-file)
-  (load custom-file 'noerror 'nomessage))
+** Backups & autosaves (kept out of project dirs)
+#+begin_src emacs-lisp
+(let ((backup-dir (expand-file-name "backups/" user-emacs-directory))
+      (autosave-dir (expand-file-name "autosaves/" user-emacs-directory)))
+  (make-directory backup-dir t)
+  (make-directory autosave-dir t)
+  (setq backup-directory-alist `(("." . ,backup-dir))
+        auto-save-file-name-transforms `((".*" ,autosave-dir t))
+        auto-save-default t
+        backup-by-copying t
+        delete-old-versions t
+        kept-new-versions 6
+        kept-old-versions 2
+        version-control t))
+#+end_src
+
+** Distinguish duplicate buffer names by path
+#+begin_src emacs-lisp
+(require 'uniquify)
+(setq uniquify-buffer-name-style 'forward)
+#+end_src
+
+* Discoverability — which-key
+
+Which-key shows available bindings after a prefix. The replacements below
+turn the popup into a self-documenting cheat sheet for every prefix in
+this config — both the native ones and the ones added by packages.
+
+#+begin_src emacs-lisp
+(use-package which-key
+  :config
+  (setq which-key-idle-delay 0.3
+        which-key-idle-secondary-delay 0.05
+        which-key-show-early-on-C-h t
+        which-key-popup-type 'side-window
+        which-key-side-window-location 'bottom
+        which-key-max-description-length 40)
+  (which-key-mode 1)
+
+  (which-key-add-key-based-replacements
+    ;; --- Native Emacs prefixes ---
+    "C-x p"   "project"
+    "C-x t"   "tab-bar"
+    "C-x r"   "register/rect/bookmark"
+    "C-x n"   "narrow"
+    "C-x v"   "version-control (vc)"
+    "C-x 4"   "other-window"
+    "C-x 5"   "other-frame"
+    "C-x 8"   "insert-special"
+    "C-x w"   "window-extras"
+    "C-x C-k" "keyboard-macros"
+    "C-x RET" "encoding"
+    "M-g"     "goto/jump"
+    "M-s"     "search"
+    "C-h"     "help"
+    "C-h 4"   "help-other-window"
+    ;; --- Custom prefixes added in this config ---
+    "C-c l"   "lsp"
+    "C-c v"   "vterm"))
+#+end_src
+
+* Completion
+
+** Minibuffer — fido-vertical (built-in)
+
+Vertical fuzzy completion for =M-x=, =C-x C-f=, =C-x b=, and every other
+=completing-read= prompt. Built-in successor to =ido-mode= (works
+everywhere, not just files/buffers).
+
+While at the minibuffer prompt:
+- Type to narrow; matching is fuzzy (=flex=).
+- =C-n= / =C-p= move through candidates.
+- =RET= selects the *highlighted* candidate; =C-j= submits the *typed*
+  text verbatim (useful when creating a new file).
+
+#+begin_src emacs-lisp
+(fido-vertical-mode 1)
+(setq completion-styles '(flex basic)
+      completion-category-overrides
+      '((file (styles . (basic partial-completion flex)))))
+#+end_src
+
+** In-buffer — completion-preview (built-in, Emacs 30+)
+
+Shows ghost-text completion suggestions inline as you type. Replaces
+=company=. =TAB= accepts the suggestion; =M-n= / =M-p= cycle alternatives.
+
+#+begin_src emacs-lisp
+(when (fboundp 'global-completion-preview-mode)
+  (global-completion-preview-mode 1))
+#+end_src
+
+* File management — dired (built-in)
+
+Dired is Emacs's built-in file manager. Open with =C-x d=. Jump to the
+current file's directory with =C-x C-j= (=dired-x=).
+
+Inside dired:
+| Key | Action                          |
+|-----+---------------------------------|
+| =RET= | open file/dir                 |
+| =^=   | go to parent                  |
+| =m=   | mark current line             |
+| =u=   | unmark                        |
+| =U=   | unmark all                    |
+| =t=   | toggle marks                  |
+| =D=   | delete marked                 |
+| =R=   | rename / move                 |
+| =C=   | copy                          |
+| =+=   | mkdir                         |
+| =g=   | refresh                       |
+| =s=   | toggle sort by name/date      |
+| =(=   | toggle long/short listing     |
+| =M-x wdired-change-to-wdired-mode= | edit listing as text |
+
+#+begin_src emacs-lisp
+(use-package dired
+  :ensure nil
+  :commands (dired dired-jump)
+  :config
+  (require 'dired-x)                              ;; adds C-x C-j, dired-omit-mode
+  (setq dired-dwim-target t                       ;; default copy/move target = other dired window
+        dired-recursive-copies 'always
+        dired-recursive-deletes 'always
+        delete-by-moving-to-trash t)
+
+  ;; macOS BSD ls lacks --group-directories-first; use coreutils' gls if installed.
+  (if (and (eq system-type 'darwin) (executable-find "gls"))
+      (progn
+        (setq insert-directory-program "gls")
+        (setq dired-listing-switches "-alh --group-directories-first"))
+    (setq dired-listing-switches "-alh"))
+
+  (add-hook 'dired-mode-hook #'auto-revert-mode))
+#+end_src
+
+* Project management — project.el (built-in)
+
+Project root auto-detected from =.git=. Standard prefix: =C-x p=.
+
+| Key       | Action                                            |
+|-----------+---------------------------------------------------|
+| =C-x p p= | switch project                                    |
+| =C-x p f= | find file in project                              |
+| =C-x p g= | find regexp in project (uses xref)                |
+| =C-x p G= | regenerate project files cache                    |
+| =C-x p b= | switch buffer in project                          |
+| =C-x p d= | dired at project root                             |
+| =C-x p e= | eshell in project                                 |
+| =C-x p s= | shell in project                                  |
+| =C-x p c= | compile in project                                |
+| =C-x p k= | kill project buffers                              |
+| =C-x p D= | run command in project root                       |
+
+No additional config needed.
+
+* Window & tab management
+
+** Window navigation — windmove (built-in)
+Move between windows with =Shift+arrow= (also =Shift+hjkl= via the line
+below — uncomment if you want vim-feeling without evil-mode).
+#+begin_src emacs-lisp
+(windmove-default-keybindings)
+;; Vim-style alternative (commented; enable if you miss C-hjkl from nvim):
+;; (windmove-default-keybindings 'control)
+#+end_src
+
+** Tabs — tab-bar-mode (built-in)
+Replaces tmux windows. Tabs hold their own *window layout*, not just a
+single buffer.
+
+| Key       | Action                                          |
+|-----------+-------------------------------------------------|
+| =C-x t 2= | new tab                                         |
+| =C-x t 0= | close tab                                       |
+| =C-x t o= | next tab                                        |
+| =C-x t O= | previous tab                                    |
+| =C-x t r= | rename tab                                      |
+| =C-x t b= | switch to buffer in *new* tab                   |
+| =C-x t t= | switch tab by name                              |
+| =C-x t f= | open file in new tab                            |
+| =C-x t d= | dired in new tab                                |
+| =C-x t u= | undo tab close                                  |
+
+#+begin_src emacs-lisp
+(tab-bar-mode 1)
+(setq tab-bar-show 1                       ;; only show bar when 2+ tabs exist
+      tab-bar-new-tab-choice "*scratch*"
+      tab-bar-close-button-show nil
+      tab-bar-new-button-show nil)
+#+end_src
+
+* Session persistence — desktop-save-mode (built-in)
+
+Saves open buffers and window layout across restarts. Replaces
+=tmux-resurrect= / =tmux-continuum=.
+
+#+begin_src emacs-lisp
+(setq desktop-path (list user-emacs-directory)
+      desktop-save t
+      desktop-restore-eager 5             ;; restore the first 5 buffers eagerly
+      desktop-load-locked-desktop t)
+(desktop-save-mode 1)
+#+end_src
+
+* Navigation
+
+** avy — jump to any visible position
+Replaces =flash.nvim=. Type =M-g c <char>= and avy overlays jump letters
+on every match — press the letter to fly there.
+
+#+begin_src emacs-lisp
+(use-package avy
+  :bind (("M-g c" . avy-goto-char)
+         ("M-g w" . avy-goto-word-1)
+         ("M-g l" . avy-goto-line)))
+#+end_src
+
+** expand-region — semantic selection growth
+Press =C-== repeatedly to grow the selection by semantic unit (word →
+string → sexp → function → class). The native answer to vim text objects.
+=C-M--= (or =C-= with negative prefix) shrinks.
+
+#+begin_src emacs-lisp
+(use-package expand-region
+  :bind ("C-=" . er/expand-region))
+#+end_src
+
+* Git
+
+** magit — git porcelain
+The one truly essential non-native package. =C-x g= opens =magit-status=.
+
+In the status buffer:
+| Key   | Action                          |
+|-------+---------------------------------|
+| =s=   | stage hunk/file                 |
+| =u=   | unstage                         |
+| =k=   | discard                         |
+| =c c= | commit                          |
+| =c a= | amend                           |
+| =P p= | push                            |
+| =F p= | pull                            |
+| =l l= | log current branch              |
+| =b b= | switch branch                   |
+| =b c= | create branch                   |
+| =z z= | stash                           |
+| =?=   | full key help                   |
+
+#+begin_src emacs-lisp
+(use-package magit
+  :bind ("C-x g" . magit-status))
+#+end_src
+
+** diff-hl — git hunks in the fringe
+Replaces =gitsigns.nvim=. Shows added/changed/removed indicators next to
+the line numbers; also integrated with =magit= so the markers refresh
+after stage/commit.
+
+#+begin_src emacs-lisp
+(use-package diff-hl
+  :hook ((prog-mode . diff-hl-mode)
+         (dired-mode . diff-hl-dired-mode)
+         (magit-pre-refresh . diff-hl-magit-pre-refresh)
+         (magit-post-refresh . diff-hl-magit-post-refresh)))
+#+end_src
+
+* Language support
+
+** Tree-sitter — treesit-auto
+Automatically installs grammars and remaps to =*-ts-mode= variants.
+#+begin_src emacs-lisp
+(use-package treesit-auto
+  :config
+  (setq treesit-auto-install 'prompt)
+  (global-treesit-auto-mode))
+#+end_src
+
+** Web mode (HTML, JSX, TSX)
+#+begin_src emacs-lisp
+(use-package web-mode
+  :mode (("\\.html?\\'" . web-mode)
+         ("\\.jsx\\'"   . web-mode)
+         ("\\.tsx\\'"   . web-mode))
+  :config
+  (setq web-mode-markup-indent-offset 4
+        web-mode-css-indent-offset 4
+        web-mode-code-indent-offset 4
+        web-mode-enable-auto-pairing t
+        web-mode-enable-auto-closing t
+        web-mode-enable-current-element-highlight t))
+#+end_src
+
+** Lua
+#+begin_src emacs-lisp
+(use-package lua-mode :mode "\\.lua\\'")
+#+end_src
+
+** Haxe
+#+begin_src emacs-lisp
+(use-package haxe-mode :mode "\\.hx\\'")
+#+end_src
+
+* LSP — lsp-mode + lsp-ui
+
+Kept (over the lighter built-in =eglot=) specifically for Mason-like
+server installation: =M-x lsp-install-server= prompts for a server and
+downloads it under =~/.emacs.d/.cache/lsp/=. Diagnostics flow through the
+built-in =flymake=. Formatting is handled by =apheleia= (next section),
+not the LSP server, so format-on-save is consistent across languages.
+
+LSP prefix: =C-c l=. Inside an LSP-managed buffer:
+| Key         | Action                              |
+|-------------+-------------------------------------|
+| =C-c l g g= | go to definition                    |
+| =C-c l g r= | find references                     |
+| =C-c l g i= | find implementations                |
+| =C-c l g t= | go to type definition               |
+| =C-c l h h= | hover documentation                 |
+| =C-c l r r= | rename symbol                       |
+| =C-c l a a= | code actions                        |
+| =C-c l = b= | format buffer                       |
+| =C-c l = r= | format region                       |
+| =C-c l F a= | add workspace folder                |
+| =C-c l F r= | remove workspace folder             |
+
+Server management:
+| Command                       | What it does                         |
+|-------------------------------+--------------------------------------|
+| =M-x lsp-install-server=      | Install a server (the Mason flow)    |
+| =M-x lsp-update-server=       | Update an installed server           |
+| =M-x lsp-uninstall-server=    | Remove an installed server           |
+| =M-x lsp-doctor=              | Diagnose your LSP setup              |
+| =M-x lsp-describe-session=    | Show what's running                  |
+
+#+begin_src emacs-lisp
+(use-package lsp-mode
+  :hook ((python-mode python-ts-mode
+          js-mode js-ts-mode
+          typescript-mode typescript-ts-mode tsx-ts-mode
+          go-mode go-ts-mode
+          rust-mode rust-ts-mode
+          c-mode c-ts-mode
+          css-mode css-ts-mode
+          web-mode
+          lua-mode lua-ts-mode
+          haxe-mode) . lsp-deferred)
+  :commands (lsp lsp-deferred)
+  :init
+  (setq lsp-keymap-prefix "C-c l")
+  :config
+  (setq lsp-auto-guess-root t
+        lsp-enable-suggest-server-download t
+        lsp-headerline-breadcrumb-enable nil))
+
+(use-package lsp-ui
+  :after lsp-mode
+  :config
+  (setq lsp-ui-doc-enable t
+        lsp-ui-sideline-enable t
+        lsp-ui-sideline-show-hover nil))
+#+end_src
+
+* Formatting — apheleia
+
+Format-on-save using external formatters (=prettier=, =black=, =gofmt=,
+=rustfmt=, etc.). You install the binary; apheleia detects file type and
+runs it asynchronously without disturbing the cursor.
+
+#+begin_src emacs-lisp
+(use-package apheleia
+  :config (apheleia-global-mode 1))
+#+end_src
+
+* Terminal — vterm
+
+Real terminal inside Emacs. With =vterm= + =tab-bar-mode= you do not need
+=tmux=: each project gets its own toggle-able terminal buffer, and tabs
+hold full window layouts.
+
+| Key       | Action                              |
+|-----------+-------------------------------------|
+| =C-c v=   | open vterm in current window        |
+| =C-c V=   | open vterm in other window          |
+| =C-`=     | toggle project terminal popup       |
+| =C-~=     | toggle, opening in current dir      |
+| =C-c C-t= | toggle copy-mode (read/yank text)   |
+
+Requires: =brew install cmake libvterm=.
+
+#+begin_src emacs-lisp
+(use-package vterm
+  :bind (("C-c v" . vterm)
+         ("C-c V" . vterm-other-window))
+  :config
+  (setq vterm-max-scrollback 10000))
+
+(use-package vterm-toggle
+  :bind (("C-`" . vterm-toggle)
+         ("C-~" . vterm-toggle-cd))
+  :config
+  (setq vterm-toggle-fullscreen-p nil
+        vterm-toggle-scope 'project))
+#+end_src
+
+* macOS PATH
+
+GUI Emacs on macOS doesn't inherit the shell's =PATH=, so language
+servers, formatters, and =gls= won't be found unless we re-import it.
+
+#+begin_src emacs-lisp
+(use-package exec-path-from-shell
+  :if (memq window-system '(mac ns x))
+  :config (exec-path-from-shell-initialize))
 #+end_src
